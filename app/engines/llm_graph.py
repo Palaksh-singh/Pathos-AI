@@ -236,7 +236,10 @@ async def _call_llm(system_prompt: str, user_prompt: str) -> str:
         if settings.llm_provider.value == "openai":
             from openai import AsyncOpenAI
 
-            client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value() if settings.openai_api_key else None)
+            client = AsyncOpenAI(
+                api_key=settings.openai_api_key.get_secret_value() if settings.openai_api_key else None,
+                base_url=settings.openai_base_url,  # None -> official OpenAI endpoint
+            )
             response = await client.chat.completions.create(
                 model=settings.generation_model,
                 temperature=settings.generation_temperature,
