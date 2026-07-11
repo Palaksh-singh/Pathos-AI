@@ -62,9 +62,9 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     password_hash_scheme: str = "bcrypt"
     allowed_cors_origins_raw: str = Field(
-       default="http://localhost:5173",
-       alias="allowed_cors_origins",
-       description="Comma-separated list of allowed CORS origins.",
+        default="http://localhost:5173",
+        alias="allowed_cors_origins",
+        description="Comma-separated list of allowed CORS origins.",
     )
 
     # --- Database ------------------------------------------------------------
@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     # --- LLM Provider ----------------------------------------------------------
     llm_provider: LLMProvider = LLMProvider.OPENAI
     openai_api_key: SecretStr | None = None
+    openai_base_url: str | None = None  # e.g. https://api.groq.com/openai/v1 for a free Groq key
     anthropic_api_key: SecretStr | None = None
     generation_model: str = "gpt-4o-mini"
     generation_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
@@ -87,8 +88,11 @@ class Settings(BaseSettings):
     qdrant_collection: str = "pathos_clinical_kb"
     pinecone_api_key: SecretStr | None = None
     pinecone_index: str = "pathos-clinical-kb"
+    embedding_provider: Literal["openai", "local"] = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
+    local_embedding_model: str = "BAAI/bge-small-en-v1.5"
+    local_embedding_dimensions: int = 384
     hybrid_dense_weight: float = Field(default=0.6, ge=0.0, le=1.0)
     retrieval_top_k_dense: int = 12
     retrieval_top_k_sparse: int = 12
@@ -118,7 +122,13 @@ class Settings(BaseSettings):
 
     @property
     def allowed_cors_origins(self) -> list[str]:
-       return [origin.strip() for origin in self.allowed_cors_origins_raw.split(",") if origin.strip()]
+        return [origin.strip() for origin in self.allowed_cors_origins_raw.split(",") if origin.strip()]
+
+    @property
+    def active_embedding_dimensions(self) -> int:
+        """The vector size Qdrant's collection must be created with — depends
+        on whether embeddings come from OpenAI or the local model."""
+        return self.local_embedding_dimensions if self.embedding_provider == "local" else self.embedding_dimensions
 
     @model_validator(mode="after")
     def _validate_provider_keys(self) -> "Settings":
