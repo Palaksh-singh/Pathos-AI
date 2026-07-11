@@ -36,42 +36,80 @@ class DenseEmbedder:
     Kept isolated behind this class so swapping providers (OpenAI ->
     Anthropic-compatible endpoint -> local sentence-transformers model)
     never touches calling code in retrieval_service.py.
+
+    Two providers are supported out of the box:
+      - "openai": calls OpenAI's embeddings endpoint (or any OpenAI-compatible
+        endpoint via `OPENAI_BASE_URL`, e.g. a self-hosted embedding server).
+      - "local": runs a small sentence-transformers model on-device — zero
+        API cost, zero network dependency, useful when you don't have (or
+        don't want to spend) LLM provider credits just for retrieval.
     """
 
     def __init__(self, model: str | None = None, dimensions: int | None = None) -> None:
-        self.model = model or settings.embedding_model
-        self.dimensions = dimensions or settings.embedding_dimensions
+        self.model = model or (
+            settings.local_embedding_model if settings.embedding_provider == "local" else settings.embedding_model
+        )
+        self.dimensions = dimensions or settings.active_embedding_dimensions
+        self._local_model = None  # lazy-loaded fastembed model
 
     async def embed_query(self, text: str) -> list[float]:
-        return await self._embed_batch([text])[0] if False else (await self._embed_batch([text]))[0]
+        return (await self._embed_batch([text]))[0]
 
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return await self._embed_batch(texts)
 
     async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if settings.embedding_provider == "local":
+            return await self._embed_batch_local(texts)
+        return await self._embed_batch_openai(texts)
+
+    async def _embed_batch_openai(self, texts: list[str]) -> list[list[float]]:
         """
-        Calls the configured embedding provider. Import is deferred so this
-        module has zero hard dependency on the `openai` package when the
-        engine isn't in use (e.g. during unit tests that mock this class).
+        Calls the configured OpenAI-compatible embedding provider. Import is
+        deferred so this module has zero hard dependency on the `openai`
+        package when the engine isn't in use (e.g. during unit tests that
+        mock this class).
         """
         try:
-            if settings.llm_provider.value == "openai":
-                from openai import AsyncOpenAI
+            from openai import AsyncOpenAI
 
-                client = AsyncOpenAI(api_key=settings.openai_api_key.get_secret_value() if settings.openai_api_key else None)
-                response = await client.embeddings.create(model=self.model, input=texts)
-                return [item.embedding for item in response.data]
-            else:
-                # Anthropic does not currently expose a first-party embeddings
-                # endpoint; fall back to a configured OpenAI-compatible one,
-                # or raise clearly so misconfiguration is obvious at runtime.
-                raise RuntimeError(
-                    "No embedding provider configured for the selected LLM_PROVIDER. "
-                    "Set OPENAI_API_KEY (used for embeddings regardless of chat provider) "
-                    "or configure a self-hosted embedding endpoint."
-                )
+            client = AsyncOpenAI(
+                api_key=settings.openai_api_key.get_secret_value() if settings.openai_api_key else None,
+                base_url=settings.openai_base_url,  # None -> official OpenAI endpoint
+            )
+            response = await client.embeddings.create(model=self.model, input=texts)
+            return [item.embedding for item in response.data]
         except Exception:
             logger.exception("dense_embedding_failed", extra={"model": self.model, "batch_size": len(texts)})
+            raise
+
+    async def _embed_batch_local(self, texts: list[str]) -> list[list[float]]:
+        """
+        Runs a local ONNX embedding model via fastembed in a background
+        thread (the library is synchronous/CPU-bound, so this keeps the
+        async event loop from blocking on model inference). Deliberately
+        uses fastembed rather than sentence-transformers: fastembed has no
+        PyTorch dependency, which avoids PyTorch's extremely deep nested
+        package paths that exceed Windows' default 260-character path limit
+        on some systems. Model weights are downloaded once on first use and
+        cached locally — after that, this path makes zero network calls.
+        """
+        import asyncio
+
+        def _encode() -> list[list[float]]:
+            if self._local_model is None:
+                from fastembed import TextEmbedding
+
+                self._local_model = TextEmbedding(model_name=self.model)
+                logger.info("local_embedding_model_loaded", extra={"model": self.model})
+
+            vectors = list(self._local_model.embed(texts))
+            return [vector.tolist() for vector in vectors]
+
+        try:
+            return await asyncio.to_thread(_encode)
+        except Exception:
+            logger.exception("local_embedding_failed", extra={"model": self.model, "batch_size": len(texts)})
             raise
 
 
