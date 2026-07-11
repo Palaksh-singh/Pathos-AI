@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pathos AI — Clinical RAG Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+  <!-- ============ AUTH SCREEN ============ -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="auth-card">
+      <div class="brand" style="margin-bottom:22px;">
+        <div class="brand-mark">P</div>
+        <div class="brand-name">Pathos AI</div>
+      </div>
+      <div id="auth-error" class="auth-error"></div>
+
+      <div id="login-form">
+        <input type="email" id="login-email" placeholder="Email" />
+        <input type="password" id="login-password" placeholder="Password" />
+        <button class="auth-submit" onclick="handleLogin()">Sign in</button>
+        <div class="auth-toggle" onclick="toggleAuthMode()">Need an account? Register</div>
+      </div>
+
+      <div id="register-form" style="display:none;">
+        <input type="text" id="register-name" placeholder="Full name" />
+        <input type="email" id="register-email" placeholder="Email" />
+        <input type="password" id="register-password" placeholder="Password (min 10 chars, mixed case, digit, symbol)" />
+        <button class="auth-submit" onclick="handleRegister()">Create account</button>
+        <div class="auth-toggle" onclick="toggleAuthMode()">Already have an account? Sign in</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ APP SHELL ============ -->
+  <div id="app-shell" class="app-shell" style="display:none;">
+
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">P</div>
+        <div class="brand-name">Pathos AI</div>
+      </div>
+      <button class="new-chat-btn" onclick="startNewSession()">
+        <span>＋</span> New conversation
+      </button>
+      <div id="session-list" class="session-list"></div>
+      <div class="sidebar-footer">
+        Educational demo — not a certified medical device. Always consult a
+        licensed clinician for real health decisions.
+      </div>
+    </aside>
+
+    <!-- Main chat -->
+    <main class="chat-column">
+      <div class="chat-topbar">
+        <div class="topbar-title" id="session-title">New conversation</div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <div class="disclaimer-pill">Educational use only</div>
+          <button class="btn-secondary" onclick="openReportModal()">📄 Generate report</button>
+        </div>
+      </div>
+
+      <div id="messages" class="messages"></div>
+
+      <div class="chat-input-bar">
+        <div class="chat-input-row">
+          <textarea id="chat-textarea" class="chat-textarea" rows="1"
+            placeholder="Ask Pathos AI about symptoms, conditions, or general health guidance..."
+            onkeydown="handleTextareaKeydown(event)"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendMessage()">➤</button>
+        </div>
+        <div class="input-hint">Pathos AI does not diagnose conditions or prescribe exact dosages. For emergencies, contact local emergency services.</div>
+      </div>
+    </main>
+
+    <!-- Trace panel (signature element) -->
+    <aside class="trace-panel" id="trace-panel">
+      <div class="trace-header">Pipeline Trace</div>
+      <div class="trace-subheader">Live LangGraph node execution</div>
+      <div id="trace-steps"></div>
+      <div class="trace-stats" id="trace-stats" style="display:none;">
+        <div>
+          <div class="trace-stat-label">Latency</div>
+          <div class="trace-stat-value" id="stat-latency">—</div>
+        </div>
+        <div>
+          <div class="trace-stat-label">Risk level</div>
+          <div class="trace-stat-value" id="stat-risk">—</div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ============ REPORT MODAL ============ -->
+  <div id="report-modal-backdrop" class="modal-backdrop">
+    <div class="report-modal">
+      <div class="report-modal-header">
+        <strong>Session report preview</strong>
+        <span onclick="closeReportModal()" style="cursor:pointer;">✕</span>
+      </div>
+      <div class="report-modal-body" id="report-modal-body">Loading…</div>
+      <div class="report-modal-footer">
+        <button class="btn-secondary" onclick="closeReportModal()">Close</button>
+        <button class="btn-primary" onclick="downloadReport()">Download PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
