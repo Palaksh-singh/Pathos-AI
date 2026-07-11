@@ -61,7 +61,7 @@ class RetrievalService:
         if settings.qdrant_collection not in existing:
             await client.create_collection(
                 collection_name=settings.qdrant_collection,
-                vectors_config=VectorParams(size=settings.embedding_dimensions, distance=Distance.COSINE),
+                vectors_config=VectorParams(size=settings.active_embedding_dimensions, distance=Distance.COSINE),
             )
             logger.info("qdrant_collection_created", extra={"collection": settings.qdrant_collection})
 
