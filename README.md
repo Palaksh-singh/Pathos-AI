@@ -18,10 +18,12 @@ SQLAlchemy (async) · JWT auth · OpenTelemetry / LangSmith · Tailwind-styled S
 2. [Repository structure](#repository-structure)
 3. [Trade-offs & architecture decisions](#trade-offs--architecture-decisions)
 4. [Local installation](#local-installation)
-5. [Running the test suite](#running-the-test-suite)
-6. [API overview](#api-overview)
-7. [Safety & privacy posture](#safety--privacy-posture)
-8. [Known limitations](#known-limitations)
+5. [Free-tier setup (no paid API key required)](#free-tier-setup-no-paid-api-key-required)
+6. [Running the test suite](#running-the-test-suite)
+7. [API overview](#api-overview)
+8. [Safety & privacy posture](#safety--privacy-posture)
+9. [Known limitations](#known-limitations)
+10. [Troubleshooting (Windows-specific)](#troubleshooting-windows-specific)
 
 ---
 
@@ -239,7 +241,56 @@ each have their own clinical content source and chunking strategy.
 
 ---
 
-## Running the test suite
+## Free-tier setup (no paid API key required)
+
+You don't need a paid OpenAI account to run Pathos AI. Two swaps make the
+entire stack free:
+
+**1. Chat generation → Groq.** Groq gives out a free API key (no credit
+card) and speaks the exact same API format as OpenAI, so no code changes
+are needed — just point the existing OpenAI client at a different URL.
+
+**2. Embeddings → local, via `fastembed`.** Instead of calling an embedding
+API at all, this runs a small ONNX model directly on your machine. Zero
+cost, zero network calls after the first model download, and — importantly
+for Windows users — no PyTorch dependency (see the troubleshooting section
+below for why that matters).
+
+### Setup
+
+1. Get a free key at **https://console.groq.com/keys** (`gsk_...`).
+2. Install the local embedding dependency:
+   ```bash
+   pip install fastembed==0.3.6
+   ```
+3. In `.env`, set:
+   ```
+   LLM_PROVIDER=openai
+   OPENAI_API_KEY=gsk_your-groq-key-here
+   OPENAI_BASE_URL=https://api.groq.com/openai/v1
+   GENERATION_MODEL=llama-3.3-70b-versatile
+
+   EMBEDDING_PROVIDER=local
+   LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+   LOCAL_EMBEDDING_DIMENSIONS=384
+   ```
+   Yes, `LLM_PROVIDER` stays `openai` even though the key is from Groq —
+   that field controls which *client library/request format* is used
+   (OpenAI's), not literally which company issued the key.
+4. Restart the server so the new `.env` values are actually loaded (see the
+   troubleshooting note on `--reload` below — this step trips people up).
+
+### Limitations of the free tier
+
+- Groq's free tier is rate-limited (roughly ~1,000 requests/day depending
+  on the model) — fine for development and demos, not for a public
+  production deployment.
+- If you exceed Groq's limit mid-session, Google AI Studio's Gemini free
+  tier is another genuinely free, no-card option, though it needs a
+  slightly different `OPENAI_BASE_URL` (Gemini's OpenAI-compatibility
+  layer) rather than reusing the Groq config as-is.
+
+---
 
 ```bash
 pytest tests/ -v
@@ -310,3 +361,105 @@ used to make real health decisions.
 - Database migrations use `create_all` rather than Alembic — see the
   trade-offs section above before taking this to a real production
   environment with evolving schema.
+
+---
+
+## Troubleshooting (Windows-specific)
+
+These are real issues encountered running Pathos AI on Windows/PowerShell,
+kept here so they don't need to be rediscovered.
+
+### `.venv/bin/activate` not recognized
+That's the Linux/Mac path. On Windows PowerShell, use:
+```powershell
+.venv\Scripts\Activate.ps1
+```
+If PowerShell blocks script execution, run this once per session:
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+### `pip install -r requirements.txt` fails with a `ResolutionImpossible` error
+Usually a version pin that's too strict for a transitive dependency (e.g.
+`langchain-openai` needing a newer `openai` than the pin allows). Loosen
+the pin to a range, e.g. `openai>=1.52.0,<2.0.0`, rather than an exact `==`.
+
+### `ValueError: password cannot be longer than 72 bytes` during registration
+This is **not** about your actual password — it's `passlib==1.7.4` running
+a broken internal self-test against `bcrypt>=4.1.0`. Fix by pinning:
+```
+bcrypt==4.0.1
+```
+This can resurface any time you rebuild your virtualenv from scratch if
+`requirements.txt` doesn't have that pin — check it's actually there with
+`Select-String -Path requirements.txt -Pattern "bcrypt"` if it comes back.
+
+### `OSError: [WinError 206] The filename or extension is too long`
+Hit when installing `sentence-transformers` (pulls in PyTorch) or `onnx`
+on Windows — both ship deeply nested internal folders that exceed
+Windows' default 260-character path limit, especially painful with
+Microsoft Store Python's already-long install path
+(`...PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\...`).
+Permanent fix — **enable long paths system-wide** (admin PowerShell,
+then reboot, not just relaunch the terminal):
+```powershell
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+```
+Pathos AI also sidesteps this for local embeddings specifically by using
+`fastembed` (ONNX, no PyTorch) instead of `sentence-transformers`.
+
+### `docker: command not recognized` / Docker Compose can't reach the daemon
+Docker Desktop isn't installed, or isn't running. Install it, open it, and
+wait for the whale icon in the system tray to settle before running
+`docker compose up -d qdrant` again. `dockerDesktopLinuxEngine: the system
+cannot find the file specified` specifically means the engine isn't
+started yet — the CLI is installed but the background service isn't.
+
+### `pydantic_settings.SettingsError: error parsing value for field "allowed_cors_origins"`
+Pydantic-settings tries to JSON-decode env values for any `list[str]`-typed
+field, which breaks on a plain comma-separated string. Fixed in this
+codebase by storing it as a raw string field (`allowed_cors_origins_raw`)
+with a `@property` that splits it — no per-field annotation workarounds
+needed.
+
+### Edited `.env` but nothing changed after saving
+**`uvicorn --reload` only watches Python source files — it does not watch
+`.env`.** Editing `.env` while the server is running has no effect until
+you fully stop it (`Ctrl+C`, confirm the prompt returns) and start it again.
+This is the single most common "I changed the config but it's still doing
+the old thing" cause.
+
+### 401 Unauthorized on every request, right after restarting the server
+The browser has a stale access token saved in `localStorage` from a
+previous session (e.g. before you recreated the database or changed
+`JWT_SECRET_KEY`). Clear it via the browser DevTools console (`F12` →
+Console tab):
+```javascript
+localStorage.removeItem('pathos_access_token')
+```
+then refresh — you should land back on the login screen.
+
+### `AuthenticationError: Incorrect API key provided` mentioning `platform.openai.com`, even though you're using Groq
+If the error message points to OpenAI's own site, the request went to
+`api.openai.com` directly instead of your configured `OPENAI_BASE_URL` —
+almost always because the server process was started before `.env` was
+saved (see the `--reload` note above). Do a full restart.
+
+### `.venv\Scripts\Activate.ps1` : "The module '.venv' could not be loaded"
+PowerShell can't find anything at that path and misinterprets it as a
+module name. Run `dir` first to confirm you're actually in the project
+folder and that a `.venv` directory exists there — if it doesn't, create
+it fresh with `python -m venv .venv` from that exact location, and never
+move/copy that folder afterward (the activation scripts inside hard-code
+an absolute path at creation time).
+
+### Code edits don't seem to take effect at all
+If `.env` changes are correctly loading (confirmed via a full restart) but
+behavior still doesn't match the code you think is on disk, check for a
+second, older copy of the project folder — e.g. from re-extracting a zip
+into a folder that already had one, producing a nested
+`pathos-ai\pathos-ai\` structure where your editor and terminal are
+pointed at different copies. Confirm with:
+```powershell
+Get-ChildItem -Path C:\Users\<you>\Downloads -Recurse -Directory -Filter "pathos-ai" | Select-Object FullName
+```
